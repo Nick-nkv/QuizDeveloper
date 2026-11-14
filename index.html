@@ -66,8 +66,9 @@
     background: var(--card); border: 1.5px dashed var(--line); border-radius: 12px;
   }
   .feedback .fig { background: rgba(255,255,255,.75); }
-  .fig svg { display: block; width: 100%; min-width: 440px; height: auto; margin: 0 auto; }
+  .fig svg { display: block; width: 100%; height: auto; margin: 0 auto; }
   .fig text { font-family: inherit; fill: var(--text); }
+  .fig-hint { display: none; text-align: center; font-size: 12px; color: var(--muted); margin-top: 4px; }
   .fx-t { font-size: 14px; font-weight: 700; }
   .fx-s { font-size: 12px; fill: var(--muted) !important; }
   .fx-lbl { font-size: 12px; font-weight: 700; fill: var(--primary) !important; }
@@ -108,6 +109,12 @@
   .hero-stat span { font-size: 13px; opacity: .85; }
   .bar { height: 8px; background: rgba(255,255,255,.2); border-radius: 99px; overflow: hidden; margin-top: 14px; }
   .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s; }
+  .go {
+    display: block; width: 100%; margin-top: 18px; padding: 16px 20px; border-radius: 12px;
+    background: #fff; color: var(--primary); font-size: 18px; font-weight: 800;
+  }
+  .go span { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+  .go:active { transform: scale(.98); }
 
   .toolbar {
     display: flex; align-items: center; justify-content: space-between;
@@ -172,6 +179,7 @@
     background: var(--primary-soft); color: var(--primary);
   }
   .qtype.multi { background: var(--accent-soft); color: var(--accent); }
+  .qtype.again { background: var(--wrong-soft); color: var(--wrong); margin-right: 6px; }
   .question { font-size: 18px; font-weight: 600; margin: 0; }
   .options { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
   .opt {
@@ -256,6 +264,15 @@
     .question { font-size: 16px; }
     .opt .key { display: none; }
     .score-chips .chip { padding: 3px 8px; font-size: 13px; }
+    .card { padding: 16px; }
+    .fig { padding: 8px; }
+    /* Hình giữ cỡ đủ đọc chữ, vuốt ngang trong khung để xem hết */
+    .fig svg { min-width: 480px; }
+    .fig-hint { display: block; }
+  }
+  /* Máy cảm ứng không có bàn phím: ẩn hướng dẫn phím tắt */
+  @media (hover: none) {
+    .hint, .opt .key { display: none; }
   }
 </style>
 </head>
@@ -273,6 +290,7 @@
         <div class="hero-stat"><b id="hsRuns">0</b><span>lượt đã làm</span></div>
       </div>
       <div class="bar"><i id="hsBar" style="width:0"></i></div>
+      <button class="go" id="goBtn"></button>
     </div>
 
     <div class="toolbar">
@@ -292,7 +310,7 @@
     </div>
     <div class="progress"><i id="qzBar" style="width:0"></i></div>
     <div class="card" id="qCard">
-      <span class="qtype" id="qType"></span>
+      <span class="qtype again hidden" id="qAgain">ÔN LẠI CÂU SAI</span><span class="qtype" id="qType"></span>
       <p class="question" id="qText"></p>
       <div id="qCode"></div>
       <div class="options" id="qOpts"></div>
@@ -329,7 +347,9 @@
 <script src="questions.js"></script>
 <script>
 const STORE_KEY = "quizPhongVan_v1";
-const SIZES = [10, 20, 0]; // 0 = tất cả
+const SIZES = [5, 10, 20, 0]; // 0 = tất cả
+const RETRY_GAP = 3;   // câu sai quay lại sau 2 câu khác
+const RETRY_MAX = 3;   // mỗi câu quay lại tối đa 3 lần trong một lượt
 
 let store = loadStore();
 let session = null;
@@ -337,9 +357,9 @@ let session = null;
 function loadStore() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return Object.assign({ q: {}, t: {}, size: 10 }, JSON.parse(raw));
+    if (raw) return Object.assign({ q: {}, t: {}, size: 5 }, JSON.parse(raw));
   } catch (e) {}
-  return { q: {}, t: {}, size: 10 };
+  return { q: {}, t: {}, size: 5 };
 }
 function saveStore() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {}
@@ -370,7 +390,7 @@ const LAYOUT = [
 ];
 
 const codeBlock = code => `<pre class="code">${code.split("\n").map(l => `<span class="ln">${esc(l) || " "}</span>`).join("")}</pre>`;
-const figure = name => FIGS[name] ? `<figure class="fig">${FIGS[name]}</figure>` : "";
+const figure = name => FIGS[name] ? `<figure class="fig">${FIGS[name]}</figure><div class="fig-hint">← vuốt để xem hết hình →</div>` : "";
 
 const isMastered = q => store.q[q.id] && store.q[q.id].last === true;
 
@@ -387,6 +407,8 @@ function renderHome() {
   $("hsTotal").textContent = ALL_QS.length;
   $("hsRuns").textContent = runs;
   $("hsBar").style.width = (mastered / ALL_QS.length * 100) + "%";
+
+  $("goBtn").innerHTML = `▶ Học ngay<span>${store.size ? store.size + " câu" : "Tất cả câu"} trộn mọi chủ đề · ưu tiên câu hay sai</span>`;
 
   $("sizeSeg").innerHTML = SIZES.map(n =>
     `<button data-size="${n}" class="${store.size === n ? "on" : ""}">${n || "Tất cả"}</button>`).join("");
@@ -422,6 +444,8 @@ $("sizeSeg").addEventListener("click", e => {
   renderHome();
 });
 
+$("goBtn").addEventListener("click", () => startTopic("mix"));
+
 $("topicGrid").addEventListener("click", e => {
   const b = e.target.closest("[data-topic]");
   if (b) startTopic(b.dataset.topic);
@@ -453,16 +477,20 @@ function startTopic(topicId) {
   startSession(topic, pickQuestions(topic.qs, store.size));
 }
 
+// again > 0: câu sai được đưa quay lại trong lượt (không tính điểm, không ghi tiến độ).
+const makeItem = (q, again = 0) => ({
+  q,
+  again,
+  multi: q.c.length > 1,
+  opts: shuffle(q.c.map(t => ({ t, ok: true })).concat(q.w.map(t => ({ t, ok: false })))),
+  picked: new Set(),
+  result: null
+});
+
 function startSession(topic, questions) {
   session = {
     topic,
-    items: questions.map(q => ({
-      q,
-      multi: q.c.length > 1,
-      opts: shuffle(q.c.map(t => ({ t, ok: true })).concat(q.w.map(t => ({ t, ok: false })))),
-      picked: new Set(),
-      result: null
-    })),
+    items: questions.map(q => makeItem(q)),
     idx: 0,
     ok: 0,
     no: 0
@@ -485,6 +513,7 @@ function renderQuestion() {
   const type = $("qType");
   type.textContent = it.multi ? `CHỌN NHIỀU ĐÁP ÁN (${it.q.c.length} đáp án đúng)` : "CHỌN 1 ĐÁP ÁN";
   type.className = "qtype" + (it.multi ? " multi" : "");
+  $("qAgain").classList.toggle("hidden", !it.again);
   const prefix = session.topic.id === "mix" ? `[${it.q.topic.name}] ` : "";
   $("qText").innerHTML = esc(prefix) + fmt(it.q.q);
   $("qCode").innerHTML = (it.q.fig ? figure(it.q.fig) : "") + (it.q.code ? codeBlock(it.q.code) : "");
@@ -528,13 +557,20 @@ function checkAnswer() {
   if (it.result !== null || it.picked.size === 0) return;
   const correct = it.opts.every((o, i) => o.ok === it.picked.has(i));
   it.result = correct;
-  correct ? session.ok++ : session.no++;
-
-  const s = store.q[it.q.id] || { r: 0, w: 0 };
-  correct ? s.r++ : s.w++;
-  s.last = correct;
-  store.q[it.q.id] = s;
-  saveStore();
+  if (!it.again) {
+    correct ? session.ok++ : session.no++;
+    const s = store.q[it.q.id] || { r: 0, w: 0 };
+    correct ? s.r++ : s.w++;
+    s.last = correct;
+    store.q[it.q.id] = s;
+    saveStore();
+  }
+  // Sai thì cho câu này quay lại sau vài câu, tới khi làm đúng.
+  const willRetry = !correct && it.again < RETRY_MAX;
+  if (willRetry) {
+    const pos = Math.min(session.idx + RETRY_GAP, session.items.length);
+    session.items.splice(pos, 0, makeItem(it.q, it.again + 1));
+  }
 
   $("qOpts").className = "options locked";
   document.querySelectorAll("#qOpts .opt").forEach((el, i) => {
@@ -548,7 +584,7 @@ function checkAnswer() {
   });
 
   $("qFeedback").innerHTML = `<div class="feedback ${correct ? "ok" : "no"}">
-    <h4>${correct ? "Chính xác!" : "Chưa đúng, không sao cả"}</h4>
+    <h4>${correct ? (it.again ? "Chính xác! Nhớ rồi đấy" : "Chính xác!") : willRetry ? "Chưa đúng. Đọc kỹ giải thích nhé, câu này sẽ được hỏi lại trong lượt này" : "Chưa đúng, không sao cả"}</h4>
     <p>${fmt(it.q.e)}</p>${it.q.efig ? figure(it.q.efig) : ""}</div>`;
   $("qzOk").textContent = "✓ " + session.ok;
   $("qzNo").textContent = "✕ " + session.no;
@@ -589,7 +625,7 @@ document.addEventListener("keydown", e => {
 
 /* ---------------- RESULT ---------------- */
 function finish() {
-  const n = session.items.length;
+  const n = session.items.filter(it => !it.again).length;
   const pct = Math.round(session.ok / n * 100);
   const st = store.t[session.topic.id] || { runs: 0, best: 0 };
   st.runs++;
@@ -610,7 +646,7 @@ function finish() {
   $("rsTitle").textContent = title;
   $("rsMsg").textContent = msg;
 
-  const wrong = session.items.filter(it => !it.result);
+  const wrong = session.items.filter(it => !it.again && !it.result);
   $("retryWrongBtn").classList.toggle("hidden", wrong.length === 0);
   $("rsReview").innerHTML = wrong.length ? `<h3>Các câu cần xem lại (${wrong.length})</h3>` + wrong.map(it =>
     `<div class="rv">
@@ -625,7 +661,7 @@ function finish() {
 }
 
 $("retryWrongBtn").addEventListener("click", () => {
-  const wrong = session.items.filter(it => !it.result).map(it => it.q);
+  const wrong = session.items.filter(it => !it.again && !it.result).map(it => it.q);
   startSession(session.topic, shuffle(wrong));
 });
 $("againBtn").addEventListener("click", () => startTopic(session.topic.id));
